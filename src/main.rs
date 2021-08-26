@@ -12,7 +12,12 @@ use serenity::{
         event::ResumedEvent,
         gateway::Ready,
         id::{ChannelId, GuildId},
-        interactions::{Interaction, InteractionResponseType},
+        interactions::{
+            application_command::{
+                ApplicationCommandInteractionDataOptionValue, ApplicationCommandOptionType,
+            },
+            Interaction, InteractionResponseType,
+        },
     },
     prelude::{Client, Context, EventHandler /* TypeMapKey */},
     utils::Colour,
@@ -61,8 +66,47 @@ impl EventHandler for Handler {
             if let Err(why) = guild
                 .id()
                 .create_application_command(&ctx.http, |cmd| {
+                    cmd.name("game")
+                        .description("Return a random Game of the Day from GiantBomb")
+                })
+                .await
+            {
+                error!("Cannot create guild command {}", why);
+            }
+
+            if let Err(why) = guild
+                .id()
+                .create_application_command(&ctx.http, |cmd| {
                     cmd.name("gotd")
-                        .description("Return a random Game of the Day from GiantBomb");
+                        .description("Schedule a random game be send to this channel each day")
+                        .create_option(|option| {
+                            option
+                                .name("time")
+                                .description("When to send the game to the channel")
+                                .kind(ApplicationCommandOptionType::String)
+                                .required(true)
+                                .add_string_choice(
+                                    "Some time in the morning, usually around 8am EST",
+                                    "morning",
+                                )
+                                .add_string_choice(
+                                    "Some time around midday, usually around 12pm EST",
+                                    "noon",
+                                )
+                                .add_string_choice(
+                                    "Some time in the evening, usually around 8pm EST",
+                                    "night",
+                                )
+                        })
+                })
+                .await
+            {
+                error!("Cannot create guild command {}", why);
+            }
+
+            if let Err(why) = guild
+                .id()
+                .create_application_command(&ctx.http, |cmd| {
                     cmd.name("mem")
                         .description("Return stats on the cpu and memory")
                 })
@@ -121,6 +165,41 @@ impl EventHandler for Handler {
                 let ctx1 = Arc::clone(&ctx);
                 log_system_load(ctx1, *command.channel_id.as_u64()).await;
             } else if command.data.name.as_str() == "gotd" {
+                let options = command
+                    .data
+                    .options
+                    .get(0)
+                    .expect("Expected time")
+                    .resolved
+                    .as_ref()
+                    .expect("Expected time str");
+
+                if let ApplicationCommandInteractionDataOptionValue::String(time_of_day) = options {
+                    if let Err(why) = command
+                        .create_interaction_response(&ctx.http, |res| {
+                            res.kind(InteractionResponseType::ChannelMessageWithSource)
+                                .interaction_response_data(|msg| {
+                                    msg.content(format!("Gotcha, scheduling for {}", time_of_day))
+                                })
+                        })
+                        .await
+                    {
+                        error!("Failed to respond to slash command: {}", why);
+                    };
+                } else {
+                    if let Err(why) = command
+                        .create_interaction_response(&ctx.http, |res| {
+                            res.kind(InteractionResponseType::ChannelMessageWithSource)
+                                .interaction_response_data(|msg| {
+                                    msg.content("Please provide a time of day")
+                                })
+                        })
+                        .await
+                    {
+                        error!("Failed to respond to slash command: {}", why);
+                    };
+                }
+            } else if command.data.name.as_str() == "game" {
                 if let Err(why) = command
                     .create_interaction_response(&ctx.http, |res| {
                         res.kind(InteractionResponseType::ChannelMessageWithSource)
