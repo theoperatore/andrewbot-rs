@@ -1,5 +1,12 @@
-use chrono::Utc;
-use cron::Schedule;
+#[macro_use]
+extern crate diesel;
+
+mod clients;
+mod commands;
+mod store;
+
+// use chrono::Utc;
+// use cron::Schedule;
 use dotenv::dotenv;
 use serenity::{
     async_trait,
@@ -11,41 +18,66 @@ use serenity::{
         channel::Message,
         event::ResumedEvent,
         gateway::Ready,
-        id::{ChannelId, GuildId},
-        interactions::{
-            application_command::{
-                ApplicationCommandInteractionDataOptionValue, ApplicationCommandOptionType,
-            },
-            Interaction, InteractionResponseType,
-        },
+        id::GuildId,
+        interactions::{application_command::ApplicationCommandOptionType, Interaction},
     },
-    prelude::{Client, Context, EventHandler /* TypeMapKey */},
-    utils::Colour,
+    prelude::{Client, Context, EventHandler},
 };
-use std::str::FromStr;
+// use std::str::FromStr;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-// use tokio::sync::RwLock;
+
+use diesel::prelude::*;
+use diesel::r2d2::ConnectionManager;
 use tracing::{error, info, instrument};
 
-mod clients;
-mod commands;
-use clients::gotd;
+use chrono::{FixedOffset, Utc};
 use commands::ping::*;
+use cron::Schedule;
+use std::str::FromStr;
+use store::model::GotdJob;
+use store::mysql_store::GotdMysqlStore;
+use store::storage::GotdDb;
+use tokio::sync::RwLock;
 
-// #[derive(Default)]
-// struct Store;
+struct Job {
+    job: GotdJob,
+    schedule: Schedule,
+    pub tz: FixedOffset,
+    next_date: chrono::DateTime<FixedOffset>,
+}
 
-// struct GotdStore;
-// impl TypeMapKey for GotdStore {
-//     type Value = Arc<RwLock<Store>>;
-// }
+impl Job {
+    pub fn new(job: GotdJob) -> Self {
+        let schedule = Schedule::from_str(job.cron_schedule.as_str()).unwrap();
+        let tz = FixedOffset::west(5 * 3600);
+        let next_date = schedule.upcoming(tz).take(1).next().unwrap();
+        Self {
+            job,
+            schedule,
+            next_date,
+            tz,
+        }
+    }
+
+    pub fn channel_id(&self) -> u64 {
+        self.job.channel_id
+    }
+
+    pub fn get_date(&self) -> chrono::DateTime<FixedOffset> {
+        self.next_date
+    }
+
+    pub fn advance(&mut self) {
+        self.next_date = self.schedule.upcoming(self.tz).take(1).next().unwrap();
+    }
+}
 
 struct Handler {
     is_loop_running: AtomicBool,
-    dev_channel_id: u64,
+    db: Arc<GotdMysqlStore>,
 }
 
 #[async_trait]
@@ -53,20 +85,20 @@ impl EventHandler for Handler {
     // For instrument to work, all parameters must implement Debug.
     // Handler doesn't implement Debug here, so we specify to skip that argument.
     // Context doesn't implement Debug either, so it is also skipped.
-    #[instrument(skip(self, _ctx))]
+    // #[instrument(skip(self, _ctx))]
     async fn resume(&self, _ctx: Context, resume: ResumedEvent) {
         info!("Resumed; trace: {:?}", resume.trace);
     }
 
     // #[instrument(skip(self, ctx))]
     async fn ready(&self, ctx: Context, ready: Ready) {
-        info!("{} ready and connected", ready.user.name);
+        info!("{} ready", ready.user.name);
 
         for guild in ready.guilds {
             if let Err(why) = guild
                 .id()
                 .create_application_command(&ctx.http, |cmd| {
-                    cmd.name("game")
+                    cmd.name("game-test")
                         .description("Return a random Game of the Day from GiantBomb")
                 })
                 .await
@@ -77,7 +109,7 @@ impl EventHandler for Handler {
             if let Err(why) = guild
                 .id()
                 .create_application_command(&ctx.http, |cmd| {
-                    cmd.name("gotd")
+                    cmd.name("gotd-test")
                         .description("Schedule a random game be send to this channel each day")
                         .create_option(|option| {
                             option
@@ -107,7 +139,7 @@ impl EventHandler for Handler {
             if let Err(why) = guild
                 .id()
                 .create_application_command(&ctx.http, |cmd| {
-                    cmd.name("mem")
+                    cmd.name("mem-test")
                         .description("Return stats on the cpu and memory")
                 })
                 .await
@@ -119,28 +151,71 @@ impl EventHandler for Handler {
         }
     }
 
-    async fn cache_ready(&self, ctx: Context, _guilds: Vec<GuildId>) {
-        info!("Cache ready. starting up loops");
+    async fn cache_ready(&self, ctx: Context, guilds: Vec<GuildId>) {
+        info!("Cache ready");
 
-        let actx = Arc::new(ctx);
-        let dev_channel = self.dev_channel_id;
-        if !self.is_loop_running.load(Ordering::Relaxed) {
-            let ctx2 = Arc::clone(&actx);
-            tokio::spawn(async move {
-                let expression = "30 * * * * * *";
-                let schedule = Schedule::from_str(expression).unwrap();
-                let mut datetime = schedule.upcoming(Utc).take(1).next().unwrap();
-                info!("Next update at {}", datetime);
-                loop {
-                    if datetime < Utc::now() {
-                        datetime = schedule.upcoming(Utc).take(1).next().unwrap();
-                        log_system_load(Arc::clone(&ctx2), dev_channel).await;
-                        info!("Next update at {}", datetime);
-                    };
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                }
-            });
+        if self.is_loop_running.load(Ordering::Relaxed) {
+            info!("Cron threads already running");
+            return;
         }
+
+        info!("Setting up threads");
+        self.is_loop_running.store(true, Ordering::Relaxed);
+
+        let db = Arc::clone(&self.db);
+        let adb = Arc::clone(&db);
+        let aguilds = Arc::new(guilds);
+        let scheds: Arc<RwLock<Vec<Job>>> = Arc::new(RwLock::new(Vec::new()));
+
+        // DYNAMIC SCHEDULING THREAD
+        let ascheds = Arc::clone(&scheds);
+        tokio::spawn(async move {
+            info!("Starting db lookup thread");
+            loop {
+                for guild in aguilds.as_ref() {
+                    let mut out = Vec::new();
+                    match db.get_all_active_sched_for_guild(guild.0) {
+                        Ok(crons) => out.extend(crons.into_iter().map(|c| Job::new(c))),
+                        Err(why) => error!("Failed to get crons for guild: {}", why),
+                    };
+                    let mut v = ascheds.write().await;
+                    *v = out;
+                }
+
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            }
+        });
+
+        // GOTD THREAD
+        let ascheds = Arc::clone(&scheds);
+        let ctx = Arc::new(ctx);
+        let actx = Arc::clone(&ctx);
+        tokio::spawn(async move {
+            info!("Starting gotd schedule thread");
+
+            loop {
+                let mut jobs = ascheds.write().await;
+                for job in jobs.iter_mut() {
+                    let adb = Arc::clone(&adb);
+                    let datetime = job.get_date();
+                    let now = Utc::now().with_timezone(&job.tz);
+
+                    if datetime < now {
+                        job.advance();
+                        if let Err(why) =
+                            commands::game::send_gotd(Arc::clone(&actx), adb, job.channel_id())
+                                .await
+                        {
+                            error!("Failed to cron {}", why);
+                        }
+                    }
+                }
+
+                // todo: is there a way to sleep until it's time to execute the next
+                // job? Then this doesn't have to run every 500 ms
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+        });
     }
 
     // #[instrument(skip(self, ctx))]
@@ -150,164 +225,23 @@ impl EventHandler for Handler {
             let usr = &command.user.name;
             info!("Got slash command '{}' by user '{}'", cmd, usr);
 
-            let ctx = Arc::new(ctx);
-            if command.data.name.as_str() == "mem" {
-                if let Err(why) = command
-                    .create_interaction_response(&ctx.http, |res| {
-                        res.kind(InteractionResponseType::ChannelMessageWithSource)
-                            .interaction_response_data(|msg| msg.content("Querying my bits..."))
-                    })
-                    .await
+            let actx = Arc::new(ctx);
+            let actxc = Arc::clone(&actx);
+            if let Err(why) = commands::handler(actx, &self.db, &command).await {
+                let ctx_clone = Arc::clone(&actxc);
+                error!("Failed to handle to slash command: {}", why);
+                if let Err(why_cmd) = commands::respond(
+                    &ctx_clone,
+                    &command,
+                    String::from("Bzzzrrt! Failed that command"),
+                )
+                .await
                 {
-                    error!("Failed to respond to slash command: {}", why);
-                };
-
-                let ctx1 = Arc::clone(&ctx);
-                log_system_load(ctx1, *command.channel_id.as_u64()).await;
-            } else if command.data.name.as_str() == "gotd" {
-                let options = command
-                    .data
-                    .options
-                    .get(0)
-                    .expect("Expected time")
-                    .resolved
-                    .as_ref()
-                    .expect("Expected time str");
-
-                if let ApplicationCommandInteractionDataOptionValue::String(time_of_day) = options {
-                    if let Err(why) = command
-                        .create_interaction_response(&ctx.http, |res| {
-                            res.kind(InteractionResponseType::ChannelMessageWithSource)
-                                .interaction_response_data(|msg| {
-                                    msg.content(format!("Gotcha, scheduling for {}", time_of_day))
-                                })
-                        })
-                        .await
-                    {
-                        error!("Failed to respond to slash command: {}", why);
-                    };
-                } else {
-                    if let Err(why) = command
-                        .create_interaction_response(&ctx.http, |res| {
-                            res.kind(InteractionResponseType::ChannelMessageWithSource)
-                                .interaction_response_data(|msg| {
-                                    msg.content("Please provide a time of day")
-                                })
-                        })
-                        .await
-                    {
-                        error!("Failed to respond to slash command: {}", why);
-                    };
-                }
-            } else if command.data.name.as_str() == "game" {
-                if let Err(why) = command
-                    .create_interaction_response(&ctx.http, |res| {
-                        res.kind(InteractionResponseType::ChannelMessageWithSource)
-                            .interaction_response_data(|msg| msg.content("Searching for game..."))
-                    })
-                    .await
-                {
-                    error!("Failed to respond to slash command: {}", why);
-                };
-
-                // show to the users that andrew bot is thinking...
-                let typing = command.channel_id.start_typing(&ctx.http);
-                match gotd::get_random_game().await {
-                    Ok(game) => {
-                        let img = gotd::parse_image(&game);
-                        let date = gotd::parse_date(&game);
-                        if let Err(why) = command
-                            .channel_id
-                            .send_message(&ctx.http, |m| {
-                                m.embed(|e| {
-                                    let plats = game
-                                        .platforms
-                                        .map(|ps| {
-                                            ps.iter()
-                                                .map(|p| p.name.clone())
-                                                .collect::<Vec<String>>()
-                                                .join(", ")
-                                        })
-                                        .unwrap_or(String::from("No platforms"));
-                                    e.color(Colour::from(0x0099ff));
-                                    e.title(game.name);
-                                    e.author(|a| a.name("Game of the Day"));
-                                    e.url(game.site_detail_url.unwrap_or(String::from("")));
-                                    e.field("released", date, true);
-                                    e.field("platforms", plats, true);
-                                    e.description(game.deck.unwrap_or(String::from("")));
-                                    e.image(img);
-                                    e
-                                })
-                            })
-                            .await
-                        {
-                            error!("Failed to respond {}", why);
-                            if let Err(why) = command
-                                .channel_id
-                                .say(&ctx.http, "Bzzzrt! Failed to find game.")
-                                .await
-                            {
-                                error!("Failed to report failed response {}", why);
-                            }
-                        };
-                    }
-                    Err(err) => {
-                        error!("Error fetching game {}", err);
-                        if let Err(why) = command
-                            .channel_id
-                            .say(&ctx.http, "Bzzzrt! Failed to find game.")
-                            .await
-                        {
-                            error!("Failed to report failed response {}", why);
-                        }
-                    }
-                }
-
-                match typing {
-                    Ok(t) => t.stop(),
-                    Err(err) => {
-                        error!("Failed to show typing {}", err);
-                        None
-                    }
+                    error!("Failed to respond to slash command: {}", why_cmd);
                 };
             };
         }
     }
-}
-
-async fn log_system_load(ctx: Arc<Context>, id: u64) {
-    let cpu_load = sys_info::loadavg().unwrap();
-    let mem_use = sys_info::mem_info().unwrap();
-
-    // We can use ChannelId directly to send a message to a specific channel; in this case, the
-    // message would be sent to the #testing channel on the discord server.
-    if let Err(why) = ChannelId(id)
-        .send_message(&ctx, |m| {
-            m.embed(|e| {
-                e.title("System Resource Load");
-                e.field(
-                    "CPU Load Average",
-                    format!("{:.2}%", cpu_load.one * 10.0),
-                    false,
-                );
-                e.field(
-                    "Memory Usage",
-                    format!(
-                        "{:.2} MB / {:.2} MB ({:.2}% used)",
-                        mem_use.free as f32 / 1000.0,
-                        mem_use.total as f32 / 1000.0,
-                        (mem_use.free as f32 / 1000.0) / (mem_use.total as f32 / 1000.0)
-                    ),
-                    false,
-                );
-                e
-            })
-        })
-        .await
-    {
-        error!("Error sending diognostic message: {:?}", why);
-    };
 }
 
 #[hook]
@@ -327,6 +261,11 @@ async fn main() {
     dotenv().ok();
 
     tracing_subscriber::fmt::init();
+    let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL env var required");
+
+    let manager = ConnectionManager::<MysqlConnection>::new(db_url);
+    let pool = diesel::r2d2::Pool::new(manager).unwrap();
+
     let token = std::env::var("DISCORD_TOKEN").expect("DISCORD_TOKEN env var required");
     let app_id: u64 = std::env::var("APPLICATION_ID")
         .expect("APPLICATION_ID env var required ")
@@ -338,22 +277,16 @@ async fn main() {
         .before(before)
         .group(&GENERAL_GROUP);
 
-    let dev_channel_id: u64 = 689814575306244110;
-
+    // let dev_channel_id: u64 = 689814575306244110;
     let mut client = Client::builder(&token)
         .event_handler(Handler {
-            is_loop_running: AtomicBool::new(true),
-            dev_channel_id,
+            is_loop_running: AtomicBool::new(false),
+            db: Arc::new(GotdMysqlStore::new(pool)),
         })
         .application_id(app_id)
         .framework(framework)
         .await
         .expect("Err creating client");
-
-    // {
-    //     let mut data = client.data.write().await;
-    //     data.insert::<GotdStore>(Arc::new(RwLock::new(Store::default())));
-    // }
 
     // Shard count is equal to the number of guilds? other forums say that sharding isn't
     // needed until you are at 2k guilds, but the serentiy code examples say sharding
