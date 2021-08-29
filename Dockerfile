@@ -12,7 +12,7 @@ FROM debian:buster-slim AS runtime
 WORKDIR /app
 # Install OpenSSL - it is dynamically linked by some of our dependencies
 RUN apt-get update -y \
-  && apt-get install -y --no-install-recommends openssl ca-certificates libssl-dev \
+  && apt-get install -y --no-install-recommends openssl ca-certificates libssl-dev libmariadb-dev \
   # Clean up
   && apt-get autoremove -y \
   && apt-get clean -y \
