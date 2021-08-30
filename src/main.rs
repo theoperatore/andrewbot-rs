@@ -157,6 +157,29 @@ impl EventHandler for Handler {
             error!("Failed to register global application commands: {}", why);
         }
 
+        info!("Registered slash commands");
+
+        // DELETES ALL GUILD SLASH COMMANDS
+        // for guild in ready.guilds {
+        //     let commands = guild
+        //         .id()
+        //         .get_application_commands(&ctx.http)
+        //         .await
+        //         .ok()
+        //         .unwrap_or_default();
+
+        //     for command in commands {
+        //         info!("deleting command {:?}", command);
+        //         if let Err(why) = guild
+        //             .id()
+        //             .delete_application_command(&ctx.http, command.id)
+        //             .await
+        //         {
+        //             error!("error deleting command {}", why);
+        //         }
+        //     }
+        // }
+
         // THIS IS GOOD FOR TESTING
         // for guild in ready.guilds {
         //     if let Err(why) = guild
