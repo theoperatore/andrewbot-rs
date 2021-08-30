@@ -15,9 +15,10 @@ use serenity::{
         StandardFramework,
     },
     model::{
-        channel::Message,
+        channel::{Message, ReactionType},
         event::ResumedEvent,
         gateway::Ready,
+        guild::Guild,
         id::GuildId,
         interactions::{application_command::ApplicationCommandOptionType, Interaction},
     },
@@ -82,12 +83,31 @@ struct Handler {
 
 #[async_trait]
 impl EventHandler for Handler {
+    async fn guild_create(&self, _ctx: Context, guild: Guild, is_new: bool) {
+        info!(
+            "AndrewBot added to guild: {} (is new: {})",
+            guild.name, is_new
+        );
+    }
+
+    async fn message(&self, ctx: Context, new_message: Message) {
+        let kevin_toms = "<:KevinToms:776453874310709249>";
+        if new_message.content.contains(kevin_toms) {
+            if let Err(why) = new_message
+                .react(&ctx.http, ReactionType::from_str(kevin_toms).unwrap())
+                .await
+            {
+                error!("Failed to react with Kevin Toms to Kevin Toms: {}", why);
+            }
+        }
+    }
+
     // For instrument to work, all parameters must implement Debug.
     // Handler doesn't implement Debug here, so we specify to skip that argument.
     // Context doesn't implement Debug either, so it is also skipped.
     // #[instrument(skip(self, _ctx))]
     async fn resume(&self, _ctx: Context, resume: ResumedEvent) {
-        info!("Resumed; trace: {:?}", resume.trace);
+        info!("Connection resumed; trace: {:?}", resume.trace);
     }
 
     // #[instrument(skip(self, ctx))]
