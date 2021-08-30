@@ -118,7 +118,7 @@ impl EventHandler for Handler {
             if let Err(why) = guild
                 .id()
                 .create_application_command(&ctx.http, |cmd| {
-                    cmd.name("game-test")
+                    cmd.name("game")
                         .description("Return a random Game of the Day from GiantBomb")
                 })
                 .await
@@ -129,7 +129,7 @@ impl EventHandler for Handler {
             if let Err(why) = guild
                 .id()
                 .create_application_command(&ctx.http, |cmd| {
-                    cmd.name("gotd-test")
+                    cmd.name("gotd")
                         .description("Schedule a random game be send to this channel each day")
                         .create_option(|option| {
                             option
@@ -159,7 +159,7 @@ impl EventHandler for Handler {
             if let Err(why) = guild
                 .id()
                 .create_application_command(&ctx.http, |cmd| {
-                    cmd.name("mem-test")
+                    cmd.name("mem")
                         .description("Return stats on the cpu and memory")
                 })
                 .await
