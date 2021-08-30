@@ -20,7 +20,10 @@ use serenity::{
         gateway::Ready,
         guild::Guild,
         id::GuildId,
-        interactions::{application_command::ApplicationCommandOptionType, Interaction},
+        interactions::{
+            application_command::{ApplicationCommand, ApplicationCommandOptionType},
+            Interaction,
+        },
     },
     prelude::{Client, Context, EventHandler},
 };
@@ -114,61 +117,102 @@ impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!("{} ready", ready.user.name);
 
-        for guild in ready.guilds {
-            if let Err(why) = guild
-                .id()
-                .create_application_command(&ctx.http, |cmd| {
-                    cmd.name("game")
-                        .description("Return a random Game of the Day from GiantBomb")
-                })
-                .await
-            {
-                error!("Cannot create guild command {}", why);
-            }
-
-            if let Err(why) = guild
-                .id()
-                .create_application_command(&ctx.http, |cmd| {
-                    cmd.name("gotd")
-                        .description("Schedule a random game be send to this channel each day")
-                        .create_option(|option| {
-                            option
-                                .name("time")
-                                .description("When to send the game to the channel")
-                                .kind(ApplicationCommandOptionType::String)
-                                .required(true)
-                                .add_string_choice(
-                                    "Some time in the morning, usually around 8am EST",
-                                    "morning",
-                                )
-                                .add_string_choice(
-                                    "Some time around midday, usually around 12pm EST",
-                                    "noon",
-                                )
-                                .add_string_choice(
-                                    "Some time in the evening, usually around 8pm EST",
-                                    "night",
-                                )
-                        })
-                })
-                .await
-            {
-                error!("Cannot create guild command {}", why);
-            }
-
-            if let Err(why) = guild
-                .id()
-                .create_application_command(&ctx.http, |cmd| {
-                    cmd.name("mem")
-                        .description("Return stats on the cpu and memory")
-                })
-                .await
-            {
-                error!("Cannot create guild command {}", why);
-            }
-
-            info!("Slash commands ready in guild {}", guild.id());
+        if let Err(why) =
+            ApplicationCommand::set_global_application_commands(&ctx.http, |commands| {
+                commands
+                    .create_application_command(|cmd| {
+                        cmd.name("game")
+                            .description("Return a random Game of the Day from GiantBomb")
+                    })
+                    .create_application_command(|cmd| {
+                        cmd.name("gotd")
+                            .description("Schedule a random game be send to this channel each day")
+                            .create_option(|option| {
+                                option
+                                    .name("time")
+                                    .description("When to send the game to the channel")
+                                    .kind(ApplicationCommandOptionType::String)
+                                    .required(true)
+                                    .add_string_choice(
+                                        "Some time in the morning, usually around 8am EST",
+                                        "morning",
+                                    )
+                                    .add_string_choice(
+                                        "Some time around midday, usually around 12pm EST",
+                                        "noon",
+                                    )
+                                    .add_string_choice(
+                                        "Some time in the evening, usually around 8pm EST",
+                                        "night",
+                                    )
+                            })
+                    })
+                    .create_application_command(|cmd| {
+                        cmd.name("mem")
+                            .description("Return stats on the cpu and memory")
+                    })
+            })
+            .await
+        {
+            error!("Failed to register global application commands: {}", why);
         }
+
+        // THIS IS GOOD FOR TESTING
+        // for guild in ready.guilds {
+        //     if let Err(why) = guild
+        //         .id()
+        //         .create_application_command(&ctx.http, |cmd| {
+        //             cmd.name("game")
+        //                 .description("Return a random Game of the Day from GiantBomb")
+        //         })
+        //         .await
+        //     {
+        //         error!("Cannot create guild command {}", why);
+        //     }
+
+        //     if let Err(why) = guild
+        //         .id()
+        //         .create_application_command(&ctx.http, |cmd| {
+        //             cmd.name("gotd")
+        //                 .description("Schedule a random game be send to this channel each day")
+        //                 .create_option(|option| {
+        //                     option
+        //                         .name("time")
+        //                         .description("When to send the game to the channel")
+        //                         .kind(ApplicationCommandOptionType::String)
+        //                         .required(true)
+        //                         .add_string_choice(
+        //                             "Some time in the morning, usually around 8am EST",
+        //                             "morning",
+        //                         )
+        //                         .add_string_choice(
+        //                             "Some time around midday, usually around 12pm EST",
+        //                             "noon",
+        //                         )
+        //                         .add_string_choice(
+        //                             "Some time in the evening, usually around 8pm EST",
+        //                             "night",
+        //                         )
+        //                 })
+        //         })
+        //         .await
+        //     {
+        //         error!("Cannot create guild command {}", why);
+        //     }
+
+        //     if let Err(why) = guild
+        //         .id()
+        //         .create_application_command(&ctx.http, |cmd| {
+        //             cmd.name("mem")
+        //                 .description("Return stats on the cpu and memory")
+        //         })
+        //         .await
+        //     {
+        //         error!("Cannot create guild command {}", why);
+        //     }
+
+        //     info!("Slash commands ready in guild {}", guild.id());
+        // }
     }
 
     async fn cache_ready(&self, ctx: Context, guilds: Vec<GuildId>) {
