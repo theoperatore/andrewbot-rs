@@ -139,6 +139,10 @@ impl EventHandler for Handler {
                             })
                     })
                     .create_application_command(|cmd| {
+                        cmd.name("gotd-stop")
+                            .description("Stop pulling a Game of the Day")
+                    })
+                    .create_application_command(|cmd| {
                         cmd.name("mem")
                             .description("Return stats on the cpu and memory")
                     })

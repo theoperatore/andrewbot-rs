@@ -12,6 +12,7 @@ use tracing::error;
 
 pub mod game;
 mod gotd;
+mod gotd_stop;
 mod mem;
 
 pub async fn handler(
@@ -23,6 +24,7 @@ pub async fn handler(
     "mem" => mem::handler(ctx, db, command).await?,
     "game" => game::handler(ctx, db, command).await?,
     "gotd" => gotd::handler(ctx, db, command).await?,
+    "gotd-stop" => gotd_stop::handler(ctx, db, command).await?,
     _ => error!("Unknown slash command"),
   };
 
