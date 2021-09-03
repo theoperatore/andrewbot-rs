@@ -12,8 +12,6 @@ pub async fn handler(
   db: &GotdMysqlStore,
   command: &ApplicationCommandInteraction,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-  respond(&ctx, command, String::from("Querying my bits...")).await?;
-
   let opt = db.get_active_sched(command.channel_id.0)?;
 
   if opt.is_none() {
