@@ -115,4 +115,16 @@ impl GotdDb for GotdMysqlStore {
       Err(why) => Err(Box::new(why)),
     }
   }
+
+  /**
+   * Get all active sched
+   */
+  fn get_all_active_sched(&self) -> Result<Vec<GotdJob>, Box<dyn Error + Send + Sync>> {
+    let conn = self.db.get()?;
+    let results = gotd_schedules
+      .filter(is_deleted.eq(false))
+      .load::<GotdJob>(&conn)?;
+
+    Ok(results)
+  }
 }

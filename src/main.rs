@@ -114,8 +114,50 @@ impl EventHandler for Handler {
     }
 
     // #[instrument(skip(self, ctx))]
-    async fn ready(&self, _ctx: Context, ready: Ready) {
+    async fn ready(&self, ctx: Context, ready: Ready) {
         info!("{} ready", ready.user.name);
+
+        if let Err(why) =
+            ApplicationCommand::set_global_application_commands(&ctx.http, |commands| {
+                commands
+                    .create_application_command(|cmd| {
+                        cmd.name("game")
+                            .description("Return a random Game of the Day from GiantBomb")
+                    })
+                    .create_application_command(|cmd| {
+                        cmd.name("gotd")
+                            .description("Schedule a random game be send to this channel each day")
+                            .create_option(|option| {
+                                option
+                                    .name("time")
+                                    .description("When to send the game to the channel")
+                                    .kind(ApplicationCommandOptionType::String)
+                                    .required(true)
+                                    .add_string_choice(
+                                        "Some time in the morning, usually around 8am EST",
+                                        "morning",
+                                    )
+                                    .add_string_choice(
+                                        "Some time around midday, usually around 12pm EST",
+                                        "noon",
+                                    )
+                                    .add_string_choice(
+                                        "Some time in the evening, usually around 8pm EST",
+                                        "night",
+                                    )
+                            })
+                    })
+                    .create_application_command(|cmd| {
+                        cmd.name("mem")
+                            .description("Return stats on the cpu and memory")
+                    })
+            })
+            .await
+        {
+            error!("Failed to register global application commands: {}", why);
+        }
+
+        info!("Registered slash commands");
 
         // DELETES ALL GUILD SLASH COMMANDS
         // for guild in ready.guilds {
@@ -196,50 +238,8 @@ impl EventHandler for Handler {
         // }
     }
 
-    async fn cache_ready(&self, ctx: Context, guilds: Vec<GuildId>) {
+    async fn cache_ready(&self, ctx: Context, _guilds: Vec<GuildId>) {
         info!("Cache ready");
-
-        if let Err(why) =
-            ApplicationCommand::set_global_application_commands(&ctx.http, |commands| {
-                commands
-                    .create_application_command(|cmd| {
-                        cmd.name("game")
-                            .description("Return a random Game of the Day from GiantBomb")
-                    })
-                    .create_application_command(|cmd| {
-                        cmd.name("gotd")
-                            .description("Schedule a random game be send to this channel each day")
-                            .create_option(|option| {
-                                option
-                                    .name("time")
-                                    .description("When to send the game to the channel")
-                                    .kind(ApplicationCommandOptionType::String)
-                                    .required(true)
-                                    .add_string_choice(
-                                        "Some time in the morning, usually around 8am EST",
-                                        "morning",
-                                    )
-                                    .add_string_choice(
-                                        "Some time around midday, usually around 12pm EST",
-                                        "noon",
-                                    )
-                                    .add_string_choice(
-                                        "Some time in the evening, usually around 8pm EST",
-                                        "night",
-                                    )
-                            })
-                    })
-                    .create_application_command(|cmd| {
-                        cmd.name("mem")
-                            .description("Return stats on the cpu and memory")
-                    })
-            })
-            .await
-        {
-            error!("Failed to register global application commands: {}", why);
-        }
-
-        info!("Registered slash commands");
 
         if self.is_loop_running.load(Ordering::Relaxed) {
             info!("Cron threads already running");
@@ -251,7 +251,6 @@ impl EventHandler for Handler {
 
         let db = Arc::clone(&self.db);
         let adb = Arc::clone(&db);
-        let aguilds = Arc::new(guilds);
         let scheds: Arc<RwLock<Vec<Job>>> = Arc::new(RwLock::new(Vec::new()));
 
         // DYNAMIC SCHEDULING THREAD
@@ -259,17 +258,14 @@ impl EventHandler for Handler {
         tokio::spawn(async move {
             info!("Starting db lookup thread");
             loop {
-                for guild in aguilds.as_ref() {
-                    let mut out = Vec::new();
-                    match db.get_all_active_sched_for_guild(guild.0) {
-                        Ok(crons) => out.extend(crons.into_iter().map(|c| Job::new(c))),
-                        Err(why) => error!("Failed to get crons for guild: {}", why),
-                    };
-                    let mut v = ascheds.write().await;
-                    *v = out;
-                }
-
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                let mut out = Vec::new();
+                match db.get_all_active_sched() {
+                    Ok(crons) => out.extend(crons.into_iter().map(|c| Job::new(c))),
+                    Err(why) => error!("Failed to get crons for guild: {}", why),
+                };
+                let mut v = ascheds.write().await;
+                *v = out;
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             }
         });
 

@@ -23,13 +23,18 @@ pub trait GotdDb {
   ) -> Result<Option<GotdJob>, Box<dyn Error + Send + Sync>>;
 
   /**
-   * If an active sched exists for channel, return it, otherwise
+   * If an active sched exists for guild, return it, otherwise
    * return an empty Option
    */
   fn get_all_active_sched_for_guild(
     &self,
     guild_id: u64,
   ) -> Result<Vec<GotdJob>, Box<dyn Error + Send + Sync>>;
+
+  /**
+   * Get all active sched
+   */
+  fn get_all_active_sched(&self) -> Result<Vec<GotdJob>, Box<dyn Error + Send + Sync>>;
 
   /**
    * Delete the sched identified by id. Return true if delete is sucessful.
