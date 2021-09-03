@@ -133,18 +133,9 @@ impl EventHandler for Handler {
                                     .description("When to send the game to the channel")
                                     .kind(ApplicationCommandOptionType::String)
                                     .required(true)
-                                    .add_string_choice(
-                                        "Some time in the morning, usually around 8am EST",
-                                        "morning",
-                                    )
-                                    .add_string_choice(
-                                        "Some time around midday, usually around 12pm EST",
-                                        "noon",
-                                    )
-                                    .add_string_choice(
-                                        "Some time in the evening, usually around 8pm EST",
-                                        "night",
-                                    )
+                                    .add_string_choice("Morning, usually around 8am EST", "morning")
+                                    .add_string_choice("Midday, usually around 12pm EST", "noon")
+                                    .add_string_choice("Evening, usually around 8pm EST", "night")
                             })
                     })
                     .create_application_command(|cmd| {
