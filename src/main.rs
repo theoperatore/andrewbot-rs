@@ -258,8 +258,14 @@ impl EventHandler for Handler {
                     Ok(crons) => out.extend(crons.into_iter().map(|c| Job::new(c))),
                     Err(why) => error!("Failed to get crons for guild: {}", why),
                 };
-                let mut v = ascheds.write().await;
-                *v = out;
+
+                // this needs to be in it's own closure in order to release the write
+                // lock when it goes out of scope. otherwise it very rarely goes out of
+                // scope and makes the gotd schedule thread hang.
+                {
+                    let mut v = ascheds.write().await;
+                    *v = out;
+                }
                 tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             }
         });
