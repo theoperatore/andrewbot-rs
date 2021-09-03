@@ -306,13 +306,19 @@ impl EventHandler for Handler {
         if let Interaction::ApplicationCommand(command) = interaction {
             let cmd = &command.data.name;
             let usr = &command.user.name;
-            info!("Got slash command '{}' by user '{}'", cmd, usr);
+            match command.guild_id.unwrap().to_partial_guild(&ctx.http).await {
+                Ok(guild) => info!(
+                    "Command '{}' by user '{}' from guild '{}'",
+                    cmd, usr, guild.name
+                ),
+                Err(_) => info!("Command '{}' by user '{}'", cmd, usr),
+            };
 
             let actx = Arc::new(ctx);
             let actxc = Arc::clone(&actx);
             if let Err(why) = commands::handler(actx, &self.db, &command).await {
                 let ctx_clone = Arc::clone(&actxc);
-                error!("Failed to handle to slash command: {}", why);
+                error!("Failed to handle to command: {}", why);
                 if let Err(why_cmd) = commands::respond(
                     &ctx_clone,
                     &command,
@@ -320,7 +326,7 @@ impl EventHandler for Handler {
                 )
                 .await
                 {
-                    error!("Failed to respond to slash command: {}", why_cmd);
+                    error!("Failed to respond to command: {}", why_cmd);
                 };
             };
         }
