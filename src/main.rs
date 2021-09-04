@@ -19,7 +19,7 @@ use serenity::{
         event::ResumedEvent,
         gateway::Ready,
         guild::Guild,
-        id::GuildId,
+        id::{ChannelId, GuildId},
         interactions::{
             application_command::{ApplicationCommand, ApplicationCommandOptionType},
             Interaction,
@@ -237,11 +237,10 @@ impl EventHandler for Handler {
         info!("Cache ready");
 
         if self.is_loop_running.load(Ordering::Relaxed) {
-            info!("Cron threads already running");
+            info!("Threads already running");
             return;
         }
 
-        info!("Setting up threads");
         self.is_loop_running.store(true, Ordering::Relaxed);
 
         let db = Arc::clone(&self.db);
@@ -367,7 +366,6 @@ async fn main() {
         .before(before)
         .group(&GENERAL_GROUP);
 
-    // let dev_channel_id: u64 = 689814575306244110;
     let mut client = Client::builder(&token)
         .event_handler(Handler {
             is_loop_running: AtomicBool::new(false),
@@ -378,11 +376,19 @@ async fn main() {
         .await
         .expect("Err creating client");
 
+    let dev_channel_id: u64 = 689814575306244110;
+    if let Err(why) = ChannelId(dev_channel_id)
+        .send_message(&client.cache_and_http.http, |m| m.content("I'm alive!"))
+        .await
+    {
+        error!("Failed to send startup message: {}", why);
+    }
+
     // Shard count is equal to the number of guilds? other forums say that sharding isn't
     // needed until you are at 2k guilds, but the serentiy code examples say sharding
     // is a good idea once your bot is on 2 or more servers. so :shrug: I'll just use
     // it and see what happens.
-    if let Err(why) = client.start_shards(2).await {
+    if let Err(why) = client.start_autosharded().await {
         error!("Client error: {:?}", why);
     };
 }
