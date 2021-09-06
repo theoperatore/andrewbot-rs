@@ -361,7 +361,6 @@ async fn main() {
                         }
                         Err(why) => error!("Failed to get crons for guild: {}", why),
                     }
-                    // jobs.push(format!("Value {}", jobs.len()));
                 }
                 Command::Check() => {
                     debug!("Checking {} jobs", jobs.len());
