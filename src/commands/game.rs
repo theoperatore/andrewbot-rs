@@ -1,6 +1,7 @@
 use super::super::GotdMysqlStore;
 use super::respond;
 use serenity::{
+  http::Http,
   model::{id::ChannelId, interactions::application_command::ApplicationCommandInteraction},
   prelude::Context,
   utils::Colour,
@@ -77,18 +78,18 @@ pub async fn handler(
 }
 
 pub async fn send_gotd(
-  ctx: Arc<Context>,
+  http: &Arc<Http>,
   _db: Arc<GotdMysqlStore>,
   channel_id: u64,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   let channel = ChannelId(channel_id);
-  let typing = channel.start_typing(&ctx.http);
+  let typing = channel.start_typing(http);
   match gotd::get_random_game().await {
     Ok(game) => {
       let img = gotd::parse_image(&game);
       let date = gotd::parse_date(&game);
       if let Err(why) = channel
-        .send_message(&ctx.http, |m| {
+        .send_message(http, |m| {
           m.embed(|e| {
             let plats = game
               .platforms
@@ -113,16 +114,12 @@ pub async fn send_gotd(
         .await
       {
         error!("Failed to respond {}", why);
-        channel
-          .say(&ctx.http, "Bzzzrt! Failed to find game.")
-          .await?;
+        channel.say(http, "Bzzzrt! Failed to find game.").await?;
       };
     }
     Err(err) => {
       error!("Error fetching game {}", err);
-      channel
-        .say(&ctx.http, "Bzzzrt! Failed to find game.")
-        .await?;
+      channel.say(http, "Bzzzrt! Failed to find game.").await?;
     }
   }
 

@@ -28,14 +28,11 @@ use serenity::{
     prelude::{Client, Context, EventHandler},
 };
 // use std::str::FromStr;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 
 use diesel::prelude::*;
 use diesel::r2d2::ConnectionManager;
-use tracing::{error, info, instrument};
+use tracing::{debug, error, info, instrument};
 
 use chrono::{FixedOffset, Utc};
 use commands::ping::*;
@@ -44,7 +41,12 @@ use std::str::FromStr;
 use store::model::GotdJob;
 use store::mysql_store::GotdMysqlStore;
 use store::storage::GotdDb;
-use tokio::sync::RwLock;
+use tokio::sync::mpsc;
+
+enum Command {
+    Update(),
+    Check(),
+}
 
 struct Job {
     job: GotdJob,
@@ -80,7 +82,6 @@ impl Job {
 }
 
 struct Handler {
-    is_loop_running: AtomicBool,
     db: Arc<GotdMysqlStore>,
 }
 
@@ -233,72 +234,8 @@ impl EventHandler for Handler {
         // }
     }
 
-    async fn cache_ready(&self, ctx: Context, _guilds: Vec<GuildId>) {
+    async fn cache_ready(&self, _ctx: Context, _guilds: Vec<GuildId>) {
         info!("Cache ready");
-
-        if self.is_loop_running.load(Ordering::Relaxed) {
-            info!("Threads already running");
-            return;
-        }
-
-        self.is_loop_running.store(true, Ordering::Relaxed);
-
-        let db = Arc::clone(&self.db);
-        let adb = Arc::clone(&db);
-        let scheds: Arc<RwLock<Vec<Job>>> = Arc::new(RwLock::new(Vec::new()));
-
-        // DYNAMIC SCHEDULING THREAD
-        let ascheds = Arc::clone(&scheds);
-        tokio::spawn(async move {
-            info!("Starting db lookup thread");
-            loop {
-                let mut out = Vec::new();
-                match db.get_all_active_sched() {
-                    Ok(crons) => out.extend(crons.into_iter().map(|c| Job::new(c))),
-                    Err(why) => error!("Failed to get crons for guild: {}", why),
-                };
-
-                // this needs to be in it's own closure in order to release the write
-                // lock when it goes out of scope. otherwise it very rarely goes out of
-                // scope and makes the gotd schedule thread hang.
-                {
-                    let mut v = ascheds.write().await;
-                    *v = out;
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-            }
-        });
-
-        // GOTD THREAD
-        let ascheds = Arc::clone(&scheds);
-        let ctx = Arc::new(ctx);
-        let actx = Arc::clone(&ctx);
-        tokio::spawn(async move {
-            info!("Starting gotd schedule thread");
-
-            loop {
-                let mut jobs = ascheds.write().await;
-                for job in jobs.iter_mut() {
-                    let adb = Arc::clone(&adb);
-                    let datetime = job.get_date();
-                    let now = Utc::now().with_timezone(&job.tz);
-
-                    if datetime < now {
-                        job.advance();
-                        if let Err(why) =
-                            commands::game::send_gotd(Arc::clone(&actx), adb, job.channel_id())
-                                .await
-                        {
-                            error!("Failed to cron {}", why);
-                        }
-                    }
-                }
-
-                // todo: is there a way to sleep until it's time to execute the next
-                // job? Then this doesn't have to run every 500 ms
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            }
-        });
     }
 
     // #[instrument(skip(self, ctx))]
@@ -348,12 +285,11 @@ struct General;
 #[instrument]
 async fn main() {
     dotenv().ok();
-
     tracing_subscriber::fmt::init();
-    let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL env var required");
 
+    let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL env var required");
     let manager = ConnectionManager::<MysqlConnection>::new(db_url);
-    let pool = diesel::r2d2::Pool::new(manager).unwrap();
+    let pool = diesel::r2d2::Pool::new(manager).expect("Failed to create connection pool");
 
     let token = std::env::var("DISCORD_TOKEN").expect("DISCORD_TOKEN env var required");
     let app_id: u64 = std::env::var("APPLICATION_ID")
@@ -366,11 +302,20 @@ async fn main() {
         .before(before)
         .group(&GENERAL_GROUP);
 
+    // Problem: I need to hold the state of the active schedules somewhere
+    // and when one is ready to be acted upon, I need to send a game to a channel.
+    // the problem right now is that each iteration of the "send game" thread will block
+    // the other threads until the game is queried and sent.
+    // I don't want that. I want to just send a message to the "game sender channel" and let that
+    // queue up / handle it self (perhaps by spawning a thread to handle sending each game).
+    let (tx, mut rx) = mpsc::channel::<Command>(5);
+    let txt = tx.clone();
+    let txj = tx.clone();
+    let db = Arc::new(GotdMysqlStore::new(pool));
+    let adb = Arc::clone(&db);
+
     let mut client = Client::builder(&token)
-        .event_handler(Handler {
-            is_loop_running: AtomicBool::new(false),
-            db: Arc::new(GotdMysqlStore::new(pool)),
-        })
+        .event_handler(Handler { db })
         .application_id(app_id)
         .framework(framework)
         .await
@@ -383,6 +328,61 @@ async fn main() {
     {
         error!("Failed to send startup message: {}", why);
     }
+
+    tokio::spawn(async move {
+        info!("Starting gotd schedule thread");
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let _ = txt.send(Command::Check()).await;
+        }
+    });
+
+    tokio::spawn(async move {
+        info!("Starting db lookup thread");
+        loop {
+            let _ = txj.send(Command::Update()).await;
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        }
+    });
+
+    let http = Arc::clone(&client.cache_and_http.http);
+    tokio::spawn(async move {
+        info!("Starting command thread");
+        let mut jobs = Vec::<Job>::new();
+
+        while let Some(message) = rx.recv().await {
+            match message {
+                Command::Update() => {
+                    debug!("Updating jobs");
+                    match adb.get_all_active_sched() {
+                        Ok(records) => {
+                            jobs.clear();
+                            jobs.extend(records.into_iter().map(|c| Job::new(c)));
+                        }
+                        Err(why) => error!("Failed to get crons for guild: {}", why),
+                    }
+                    // jobs.push(format!("Value {}", jobs.len()));
+                }
+                Command::Check() => {
+                    debug!("Checking {} jobs", jobs.len());
+                    for job in jobs.iter_mut() {
+                        let adb = Arc::clone(&adb);
+                        let datetime = job.get_date();
+                        let now = Utc::now().with_timezone(&job.tz);
+
+                        if datetime < now {
+                            job.advance();
+                            if let Err(why) =
+                                commands::game::send_gotd(&http, adb, job.channel_id()).await
+                            {
+                                error!("Failed to cron {}", why);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
 
     // Shard count is equal to the number of guilds? other forums say that sharding isn't
     // needed until you are at 2k guilds, but the serentiy code examples say sharding
