@@ -1,5 +1,7 @@
 use crate::store::mysql_store::GotdMysqlStore;
+use rand::Rng;
 use serde::Deserialize;
+use serde_json;
 use serenity::{
   model::interactions::{
     application_command::ApplicationCommandInteraction, message_component::ButtonStyle,
@@ -7,6 +9,8 @@ use serenity::{
   },
   prelude::Context,
 };
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 use tracing::error;
 
@@ -70,13 +74,27 @@ pub async fn handler(
 }
 
 fn get_random() -> Result<Wyr, Box<dyn std::error::Error>> {
-  let test = Wyr {
-    id: String::from("2ec96e6e-0f56-11ec-99b3-f21898a01299"),
-    title: String::from("WYR have Regeneration or Healing?"),
-    url: String::from(
-      "https://www.reddit.com/r/WouldYouRather/comments/iv5qqt/wyr_have_regeneration_or_healing/",
-    ),
-    options: vec![String::from("Regeneration"), String::from("Healing")],
+  let reader = BufReader::new(File::open("db/wyr/wyr-top-all.ndjson")?);
+
+  // number between 0 and 678
+  // wyr-top-all has a 678 lines...
+  // this could be improved by collecting the number of lines, but that
+  // would require reading the entire file into memory...I think?
+  // this is good enough for now
+  let idx = random(678);
+  let line = match reader.lines().nth(idx) {
+    Some(r) => match r {
+      Ok(l) => l,
+      Err(_) => String::from(""),
+    },
+    None => String::from(""),
   };
-  Ok(test)
+
+  let wyr: Wyr = serde_json::from_str(&line)?;
+  Ok(wyr)
+}
+
+fn random(max: usize) -> usize {
+  // get random int between 0 and (max - 1)
+  rand::thread_rng().gen_range(0..max)
 }

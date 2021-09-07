@@ -18,5 +18,6 @@ RUN apt-get update -y \
   && apt-get clean -y \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/target/release/andrew-bot-rs andrew-bot-rs
+COPY db/ ./db
 USER 1000
 ENTRYPOINT ["./andrew-bot-rs"]
