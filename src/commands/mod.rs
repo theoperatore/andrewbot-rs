@@ -14,6 +14,7 @@ pub mod game;
 mod gotd;
 mod gotd_stop;
 mod mem;
+mod wyr;
 
 pub async fn handler(
   ctx: Arc<Context>,
@@ -25,6 +26,7 @@ pub async fn handler(
     "game" => game::handler(ctx, db, command).await?,
     "gotd" => gotd::handler(ctx, db, command).await?,
     "gotd-stop" => gotd_stop::handler(ctx, db, command).await?,
+    "wyr" => wyr::handler(ctx, db, command).await?,
     _ => error!("Unknown slash command"),
   };
 

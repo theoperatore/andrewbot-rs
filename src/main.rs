@@ -22,7 +22,7 @@ use serenity::{
         id::{ChannelId, GuildId},
         interactions::{
             application_command::{ApplicationCommand, ApplicationCommandOptionType},
-            Interaction,
+            Interaction, InteractionApplicationCommandCallbackDataFlags, InteractionResponseType,
         },
     },
     prelude::{Client, Context, EventHandler},
@@ -134,9 +134,9 @@ impl EventHandler for Handler {
                                     .description("When to send the game to the channel")
                                     .kind(ApplicationCommandOptionType::String)
                                     .required(true)
-                                    .add_string_choice("Morning, usually around 8am EST", "morning")
-                                    .add_string_choice("Midday, usually around 12pm EST", "noon")
-                                    .add_string_choice("Evening, usually around 8pm EST", "night")
+                                    .add_string_choice("Morning, around 8am EST", "morning")
+                                    .add_string_choice("Midday, around 12pm EST", "noon")
+                                    .add_string_choice("Evening, around 8pm EST", "night")
                             })
                     })
                     .create_application_command(|cmd| {
@@ -146,6 +146,10 @@ impl EventHandler for Handler {
                     .create_application_command(|cmd| {
                         cmd.name("mem")
                             .description("Return stats on the cpu and memory")
+                    })
+                    .create_application_command(|cmd| {
+                        cmd.name("wyr")
+                            .description("Prompt this channel with a 'Would you rather?' poll")
                     })
             })
             .await
@@ -266,6 +270,55 @@ impl EventHandler for Handler {
                     error!("Failed to respond to command: {}", why_cmd);
                 };
             };
+
+            return;
+        }
+
+        if let Interaction::MessageComponent(message) = interaction {
+            let mut id_iter = message.data.custom_id.split("::");
+            let interation_type = id_iter.next();
+
+            let is_wyr = match interation_type {
+                Some(s) => s == "wyr",
+                None => false,
+            };
+
+            if !is_wyr {
+                return;
+            }
+
+            let m_opt = id_iter.next();
+            let m_wyr_id = id_iter.next();
+
+            if m_opt.is_none() || m_wyr_id.is_none() {
+                return;
+            }
+
+            let opt = m_opt.unwrap();
+            let wyr_id = m_wyr_id.unwrap();
+            let userid = &message.user.id;
+            let username = &message.user.name;
+
+            info!(
+                "wyr message response {} : {} : {} : {}",
+                userid, username, opt, wyr_id
+            );
+
+            // save everything to database
+            // let _db = &self.db;
+
+            if let Err(why) = message
+                .create_interaction_response(&ctx.http, |res| {
+                    res.kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|m| {
+                            m.flags(InteractionApplicationCommandCallbackDataFlags::EPHEMERAL)
+                                .content("👍")
+                        })
+                })
+                .await
+            {
+                error!("Failed to respond to reply: {}", why);
+            }
         }
     }
 }
