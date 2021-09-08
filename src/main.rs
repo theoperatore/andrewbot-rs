@@ -95,10 +95,18 @@ impl EventHandler for Handler {
     }
 
     async fn message(&self, ctx: Context, new_message: Message) {
-        let kevin_toms = ":KevinToms:";
+        let kevin_toms = "<:KevinToms:776453874310709249>";
+        let o_kevin_toms = "<:KevinToms:885148040619511808>";
         if new_message.content.contains(kevin_toms) {
             if let Err(why) = new_message
                 .react(&ctx.http, ReactionType::from_str(kevin_toms).unwrap())
+                .await
+            {
+                error!("Failed to react with Kevin Toms to Kevin Toms: {}", why);
+            }
+        } else if new_message.content.contains(o_kevin_toms) {
+            if let Err(why) = new_message
+                .react(&ctx.http, ReactionType::from_str(o_kevin_toms).unwrap())
                 .await
             {
                 error!("Failed to react with Kevin Toms to Kevin Toms: {}", why);
