@@ -95,7 +95,7 @@ impl EventHandler for Handler {
     }
 
     async fn message(&self, ctx: Context, new_message: Message) {
-        let kevin_toms = "<:KevinToms:776453874310709249>";
+        let kevin_toms = ":KevinToms:";
         if new_message.content.contains(kevin_toms) {
             if let Err(why) = new_message
                 .react(&ctx.http, ReactionType::from_str(kevin_toms).unwrap())
