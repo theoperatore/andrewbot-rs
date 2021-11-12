@@ -52,8 +52,14 @@ struct AlorgResponse {
 
 pub async fn get_random_game() -> Result<Game, reqwest::Error> {
   let url = "https://datas.alorg.net/api/v1/games/random";
-  let response = reqwest::get(url).await?.json::<AlorgResponse>().await?;
-  Ok(response.result)
+
+  let mut res = reqwest::get(url).await;
+  if let Err(_why) = res {
+    res = reqwest::get(url).await;
+  }
+
+  let parsed = res?.json::<AlorgResponse>().await?;
+  Ok(parsed.result)
 }
 
 pub fn parse_image(game: &Game) -> String {
