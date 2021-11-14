@@ -7,7 +7,7 @@ use serenity::{
   utils::Colour,
 };
 use std::sync::Arc;
-use tracing::error;
+use tracing::{error, info};
 
 use crate::clients::gotd;
 
@@ -113,12 +113,14 @@ pub async fn send_gotd(
         })
         .await
       {
-        error!("Failed to respond {}", why);
+        error!("Failed to respond for channel: {} {}", channel, why);
         channel.say(http, "Bzzzrt! Failed to find game.").await?;
       };
+
+      info!("Sent game for channel {}", channel);
     }
     Err(err) => {
-      error!("Error fetching game {}", err);
+      error!("Error fetching game for channel: {} {}", channel, err);
       channel.say(http, "Bzzzrt! Failed to find game.").await?;
     }
   }

@@ -54,7 +54,8 @@ pub async fn get_random_game() -> Result<Game, reqwest::Error> {
   let url = "https://datas.alorg.net/api/v1/games/random";
 
   let mut res = reqwest::get(url).await;
-  if let Err(_why) = res {
+  if let Err(why) = res {
+    tracing::error!("Failed game query, trying again: {}", why);
     res = reqwest::get(url).await;
   }
 

@@ -16,7 +16,6 @@ use serenity::{
     },
     model::{
         channel::{Message, ReactionType},
-        event::ResumedEvent,
         gateway::Ready,
         guild::Guild,
         id::{ChannelId, GuildId},
@@ -118,9 +117,9 @@ impl EventHandler for Handler {
     // Handler doesn't implement Debug here, so we specify to skip that argument.
     // Context doesn't implement Debug either, so it is also skipped.
     // #[instrument(skip(self, _ctx))]
-    async fn resume(&self, _ctx: Context, resume: ResumedEvent) {
-        info!("Connection resumed; trace: {:?}", resume.trace);
-    }
+    // async fn resume(&self, _ctx: Context, resume: ResumedEvent) {
+    //     info!("Connection resumed; trace: {:?}", resume.trace);
+    // }
 
     // #[instrument(skip(self, ctx))]
     async fn ready(&self, ctx: Context, ready: Ready) {
@@ -332,7 +331,7 @@ impl EventHandler for Handler {
 }
 
 #[hook]
-#[instrument]
+#[instrument(name = "before command", skip(_, msg, cmd))]
 async fn before(_: &Context, msg: &Message, cmd: &str) -> bool {
     info!("Got command '{}' by user '{}'", cmd, msg.author.name);
     true
