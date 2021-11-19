@@ -44,23 +44,40 @@ pub struct Game {
   themes: Option<Vec<Characteristic>>,
 }
 
-#[derive(Deserialize, Debug)]
-struct AlorgResponse {
-  status: String,
-  result: Game, // error message
+#[derive(Debug)]
+struct GotdError {
+  message: String,
 }
 
-pub async fn get_random_game() -> Result<Game, reqwest::Error> {
-  let url = "https://datas.alorg.net/api/v1/games/random";
+impl std::fmt::Display for GotdError {
+  fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    write!(f, "GotdClientError: {}", self.message)
+  }
+}
+
+impl std::error::Error for GotdError {}
+
+#[derive(Deserialize, Debug)]
+struct AlorgResponse {
+  message: String, // error message or OK
+  game: Option<Game>,
+}
+
+pub async fn get_random_game() -> Result<Game, Box<dyn std::error::Error + Send + Sync>> {
+  let url = "https://andrewbot-rs-xokx9.ondigitalocean.app/gb/games/random";
 
   let mut res = reqwest::get(url).await;
   if let Err(why) = res {
     tracing::error!("Failed game query, trying again: {}", why);
     res = reqwest::get(url).await;
   }
-
   let parsed = res?.json::<AlorgResponse>().await?;
-  Ok(parsed.result)
+  match parsed.game {
+    Some(game) => Ok(game),
+    None => Err(Box::new(GotdError {
+      message: parsed.message,
+    })),
+  }
 }
 
 pub fn parse_image(game: &Game) -> String {
